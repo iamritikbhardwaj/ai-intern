@@ -212,10 +212,21 @@ func (ai *AgentIntern) ExecuteLifecyclePass(senderEmail string, rawIncomingEmail
 
 	analysisPrompt := fmt.Sprintf(`Analyze this client request. Extract it into a clean JSON layout matching struct {title, description, scope: string[]}. Do not return markdown wraps. Email: %s`, rawIncomingEmail)
 
+	// ⏳ Pacing Buffer: Prevent hitting the endpoint too rapidly if looped
+	time.Sleep(2 * time.Second)
+
+	log.Println("[Gemini Integration] 🧠 Dispatched parsing analysis payload...")
 	resp, err := ai.GenerateContentSafe(ai.Ctx, "gemini-2.5-flash", &genai.Content{Parts: []*genai.Part{{Text: analysisPrompt}}})
 	if err != nil {
-		log.Printf("[Analysis Failure] ❌ Parsing sequence fault: %v\n", err)
-		return
+		log.Printf("[Analysis Warning] ⚠️ Initial request rate limited. Waiting 10s for token pool refresh...")
+		time.Sleep(10 * time.Second)
+
+		// Retry once cleanly
+		resp, err = ai.GenerateContentSafe(ai.Ctx, "gemini-2.5-flash", &genai.Content{Parts: []*genai.Part{{Text: analysisPrompt}}})
+		if err != nil {
+			log.Printf("[Analysis Failure] ❌ Parsing sequence fault: %v\n", err)
+			return
+		}
 	}
 
 	var req Requirement
@@ -230,14 +241,12 @@ func (ai *AgentIntern) ExecuteLifecyclePass(senderEmail string, rawIncomingEmail
 		}
 	}
 
-	// ✨ FIXED BRANCH STRATEGY CALL
 	branchName, isNewBranch, err := ai.SyncTargetBranch(req.Title)
 	if err != nil {
 		log.Printf("[Branch Error] Failed workspace configuration synchronization passes: %v\n", err)
 		return
 	}
 
-	// If it's not a new branch, we defer stepping back to main out of the workspace pass execution context cleanly
 	if isNewBranch {
 		defer ai.runExternalGitCommand("checkout", "main")
 	}
@@ -274,11 +283,12 @@ func (ai *AgentIntern) processTypeScriptFeatureDevelopment(req Requirement, past
 
 	log.Printf("[Fulfillment] Code production pass complete. Output Length: %d symbols.", len(codeGenResponse.Text()))
 
-	// 🚨 ✨ THE FIX: Explicitly target a file inside flights-scanner and write the changes down!
-	targetFile := "src/utils/urlSanitizer.ts" // Adjust this relative path to match your target file setup
+	// ⏳ ✨ THE FIX: Inject a pacing buffer to let the free-tier token buckets refresh
+	log.Println("[Engine Pace] ⏳ Standing by for 5 seconds to clear free-tier API concurrency thresholds...")
+	time.Sleep(5 * time.Second)
 
+	targetFile := "src/utils/urlSanitizer.ts"
 	log.Printf("[File System] Writing generated code payload to target path point: %s", targetFile)
-
 	// Call your GenerateFeatureCode method from coder.go
 	// (Passing a blank base64 payload since we shifted completely to text for the free-tier)
 	_, err = ai.GenerateFeatureCode(ai.Ctx, req.Description, "", targetFile)
@@ -319,7 +329,7 @@ func main() {
 	defaultTargetRepo := "/Users/macbookpro/Developer/flights-scanner"
 	internWorker := NewAgentIntern(defaultTargetRepo)
 
-	// ✨ GRACEFUL SHUTDOWN LISTENER INTERCEPT ENGINE
+	// Graceful shutdown listener setup...
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -333,8 +343,18 @@ func main() {
 	sender, body, err := internWorker.FetchLatestClientEmail()
 	if err != nil {
 		log.Printf("[Email Sync Warning] Falling back to manual parameters: %v", err)
-		sender = "gurmeet.singh@codecraftedlabs.co.in"
-		body = "Please clean the string encoding parameters on our dynamic flight checkout URLs."
+
+		sender = "Contact@flights-scanners.com"
+		// ✨ HIGH EFFICIENCY SYSTEM AUDIT PROMPT FOR FREE TIER CEILINGS
+		body = `SUBJECT: [SYSTEM-AUDIT]: Branch Sync & Skills Progress Pass
+
+Core Directive: Run an exhaustive technical audit across the flights-scanner workspace.
+1. Run 'git branch -a' to map out all active tracking branch configurations.
+2. Review file structures to check code consistency for Level 1 baseline functions.
+3. Summarize findings directly inside 'PAST_FEEDBACK.md' under a new header: '## 📊 Global Workspace Alignment Log'.
+4. Document the branches found, Level 1 skill metrics, and target project constraints.
+
+*Do not write code updates to urlSanitizer.ts yet. Focus exclusively on reading the codebase and appending the summary log to PAST_FEEDBACK.md.*`
 	}
 
 	internWorker.ExecuteLifecyclePass(sender, body)
