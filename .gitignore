@@ -1,0 +1,32 @@
+# ─── APPLICATION BINARIES ───
+# Ignore compiled Go binaries and executable files
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+ai-intern-worker
+
+# ─── ENVIRONMENT & SECRETS ───
+# Block localized credential matrices from slipping into remote history tracking
+.env
+.env.local
+.env.production
+*.pem
+*.key
+
+# ─── SYSTEM & WORKSPACE CACHES ───
+# Ignore local development setups or diagnostic temporary files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+tmp/
+
+# ─── DECOVERY & TESTING TRACES ───
+# Block test coverage profiles or temporary runtime allocations
+*.out
+*.test
+prof/
