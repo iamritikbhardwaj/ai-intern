@@ -52,7 +52,7 @@ func (ai *AgentIntern) GenerateFeatureCode(ctx context.Context, requirementText 
 	}
 
 	// ✨ Fixed: Pass the content object address natively as a direct parameter block to satisfy the variadic method signature
-	resp, err := ai.GenerateContentSafe(ctx, "gemini-2.5-pro", &genai.Content{Parts: promptParts})
+	resp, err := ai.GenerateContentSafe(ctx, "gemini-2.5-flash", &genai.Content{Parts: promptParts})
 	if err != nil {
 		return "", fmt.Errorf("gemini code synthesis request failed: %w", err)
 	}

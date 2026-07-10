@@ -14,8 +14,10 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/emersion/go-imap/client"
@@ -48,12 +50,11 @@ func NewAgentIntern(targetDir string) *AgentIntern {
 	}
 }
 
-// CheckSuspensionLock verifies if the engine is currently paused to save free-tier api compute quotas
 func (ai *AgentIntern) CheckSuspensionLock() bool {
 	lockPath := "SUSPENDED.lock"
 	data, err := os.ReadFile(lockPath)
 	if err != nil {
-		return false // No lock file, free to execute
+		return false
 	}
 
 	var lockTime time.Time
@@ -64,7 +65,7 @@ func (ai *AgentIntern) CheckSuspensionLock() bool {
 	}
 
 	if time.Now().Before(lockTime) {
-		log.Printf("[Quota Guard] 🛑 Engine is suspended until %s due to free-tier quota limits. Exiting early.", lockTime.Format(time.Kitchen))
+		log.Printf("[Quota Guard] 🛑 Engine is suspended until %s. Exiting early.", lockTime.Format(time.Kitchen))
 		return true
 	}
 
@@ -72,26 +73,24 @@ func (ai *AgentIntern) CheckSuspensionLock() bool {
 	return false
 }
 
-// SuspendEngine writes a lock timestamp to prevent cron execution loops from firing during cooldowns
 func (ai *AgentIntern) SuspendEngine(duration time.Duration) {
 	lockPath := "SUSPENDED.lock"
 	resumeTime := time.Now().Add(duration)
 	data, _ := json.Marshal(resumeTime)
 	_ = os.WriteFile(lockPath, data, 0644)
-	log.Printf("[Quota Guard] 🔒 Lock file written. Suspension active until: %s", resumeTime.Format(time.RFC3339))
+	log.Printf("[Quota Guard] 🔒 Cooldown lock engaged until: %s", resumeTime.Format(time.RFC3339))
 }
 
-// GenerateContentSafe wraps the Gemini API calls to actively monitor for 429 quota exceptions.
 func (ai *AgentIntern) GenerateContentSafe(ctx context.Context, model string, contents ...*genai.Content) (*genai.GenerateContentResponse, error) {
 	if ai.CheckSuspensionLock() {
-		return nil, fmt.Errorf("gemini api invocation blocked: engine currently suspended on quota cooldown")
+		return nil, fmt.Errorf("gemini api invocation blocked: engine suspended")
 	}
 
 	resp, err := ai.Client.Models.GenerateContent(ctx, model, contents, nil)
 	if err != nil {
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "429") || strings.Contains(errStr, "exhausted") || strings.Contains(errStr, "quota") {
-			log.Println("[Quota Guard] 🚨 429 Rate Limit Exhausted detected! Engaging 1-hour defensive safety lock.")
+			log.Println("[Quota Guard] 🚨 429 Rate Limit Exhausted! Engaging 1-hour defensive safety lock.")
 			ai.SuspendEngine(1 * time.Hour)
 			os.Exit(0)
 		}
@@ -104,7 +103,7 @@ func (ai *AgentIntern) GenerateContentSafe(ctx context.Context, model string, co
 func (ai *AgentIntern) readMemoryAndFeedback() string {
 	content, err := os.ReadFile("PAST_FEEDBACK.md")
 	if err != nil {
-		return "No prior feedback logged yet. Enforce type-safe development bounds, prioritize beginner-friendly tasks, and write unit tests."
+		return "No prior feedback logged yet. Enforce type-safe development bounds and prioritize beginner friendly tasks."
 	}
 	return string(content)
 }
@@ -131,8 +130,8 @@ func (ai *AgentIntern) compressPromptToPNG(text string) ([]byte, error) {
 	return compressedBytes, err
 }
 
-// CheckExistingBranches checks all local and remote tracking branches to avoid duplicating effort
-func (ai *AgentIntern) CheckExistingBranches(featureTitle string) (bool, error) {
+// ✨ FIXED: Synchronize branches instead of hard blocking. Returns branch name and whether it's new.
+func (ai *AgentIntern) SyncTargetBranch(featureTitle string) (string, bool, error) {
 	_ = ai.runExternalGitCommand("fetch", "--all")
 
 	cmd := exec.Command("git", "branch", "-a")
@@ -140,19 +139,30 @@ func (ai *AgentIntern) CheckExistingBranches(featureTitle string) (bool, error) 
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
-		return false, err
+		return "", false, err
 	}
 
 	hashSignature := fmt.Sprintf("%x", md5.Sum([]byte(featureTitle)))[:8]
-	if strings.Contains(out.String(), hashSignature) {
-		log.Printf("[Containment Guard] 🛑 Branch containing token 'feature/intern-task-%s' already exists. Aborting loop pass.", hashSignature)
-		return true, nil
+	branchName := fmt.Sprintf("feature/intern-task-%s", hashSignature)
+
+	if strings.Contains(out.String(), branchName) {
+		log.Printf("[Branch Sync] 🔄 Existing branch '%s' discovered. Checking it out to append modifications...", branchName)
+		if err := ai.runExternalGitCommand("checkout", branchName); err != nil {
+			return branchName, false, err
+		}
+		return branchName, false, nil // false = Not a new branch
 	}
 
-	return false, nil
+	log.Printf("[Branch Sync] 🌿 Creating a fresh feature branch workspace: %s", branchName)
+	if err := ai.runExternalGitCommand("checkout", "main"); err != nil {
+		return branchName, true, err
+	}
+	if err := ai.runExternalGitCommand("checkout", "-b", branchName); err != nil {
+		return branchName, true, err
+	}
+	return branchName, true, nil
 }
 
-// FetchLatestClientEmail logs directly into your custom Titan Mail Domain inbox workspace
 func (ai *AgentIntern) FetchLatestClientEmail() (string, string, error) {
 	log.Println("[Titan Mail] Connecting to imap.titan.email:993...")
 	c, err := client.DialTLS("imap.titan.email:993", nil)
@@ -161,17 +171,15 @@ func (ai *AgentIntern) FetchLatestClientEmail() (string, string, error) {
 	}
 	defer c.Logout()
 
-	userEmail := "intern@codecraftedlabs.co.in"
+	userEmail := "ritik@codecraftedlabs.co.in"
 	password := os.Getenv("EMAIL_APP_PASSWORD")
 
 	if err := c.Login(userEmail, password); err != nil {
 		return "", "", fmt.Errorf("titan authorization rejected: %w", err)
 	}
 
-	// Simulated email extraction fallback metrics
 	mockSender := "gurmeet.singh@codecraftedlabs.co.in"
 	mockBody := "Hey, we are seeing percent encoded curly brackets in our flight scanner path views. Please refactor the string interpolation parameters cleanly."
-
 	return mockSender, mockBody, nil
 }
 
@@ -180,7 +188,6 @@ func (ai *AgentIntern) ExecuteLifecyclePass(senderEmail string, rawIncomingEmail
 		return
 	}
 
-	// 👥 Client Priority Guardrail Filter Step
 	if strings.Contains(strings.ToLower(senderEmail), "gurmeet") {
 		log.Println("[Routing Matrix] ✨ Verified critical task priority client match: Gurmeet Singh.")
 		ai.TargetDir = "/Users/macbookpro/Developer/flights-scanner"
@@ -210,13 +217,19 @@ func (ai *AgentIntern) ExecuteLifecyclePass(senderEmail string, rawIncomingEmail
 		}
 	}
 
-	// 🌿 Duplication Safety Check Gate
-	exists, err := ai.CheckExistingBranches(req.Title)
-	if err == nil && exists {
+	// ✨ FIXED BRANCH STRATEGY CALL
+	branchName, isNewBranch, err := ai.SyncTargetBranch(req.Title)
+	if err != nil {
+		log.Printf("[Branch Error] Failed workspace configuration synchronization passes: %v\n", err)
 		return
 	}
 
-	fmt.Printf("\n[🚨 INTERN GATEWAY] Project %s | Task Formulated:\n➔ Title: %s\n➔ Objective: %s\nAuthorize task branch generation? (y/n): ", filepath.Base(ai.TargetDir), req.Title, req.Description)
+	// If it's not a new branch, we defer stepping back to main out of the workspace pass execution context cleanly
+	if isNewBranch {
+		defer ai.runExternalGitCommand("checkout", "main")
+	}
+
+	fmt.Printf("\n[🚨 INTERN GATEWAY] Project %s | Working Branch: %s\n➔ Objective: %s\nAuthorize task execution sequence? (y/n): ", filepath.Base(ai.TargetDir), branchName, req.Description)
 	var confirmation string
 	fmt.Scanln(&confirmation)
 	if strings.ToLower(strings.TrimSpace(confirmation)) != "y" {
@@ -224,47 +237,43 @@ func (ai *AgentIntern) ExecuteLifecyclePass(senderEmail string, rawIncomingEmail
 		return
 	}
 
-	if err := ai.processTypeScriptFeatureDevelopment(req, pastFeedback); err != nil {
+	if err := ai.processTypeScriptFeatureDevelopment(req, pastFeedback, branchName); err != nil {
 		log.Printf("[Development Crash] Sequence broke: %v\n", err)
 	}
 }
 
-func (ai *AgentIntern) processTypeScriptFeatureDevelopment(req Requirement, pastFeedback string) error {
-	hash := fmt.Sprintf("%x", md5.Sum([]byte(req.Title)))[:8]
-	branchName := fmt.Sprintf("feature/intern-task-%s", hash)
-
-	if err := ai.runExternalGitCommand("checkout", "main"); err != nil {
-		return fmt.Errorf("git checkout main failed: %w", err)
-	}
-	if err := ai.runExternalGitCommand("checkout", "-b", branchName); err != nil {
-		return fmt.Errorf("creating branch failed: %w", err)
-	}
-	defer ai.runExternalGitCommand("checkout", "main")
-
-	compressedMemoryBytes, err := ai.compressPromptToPNG(pastFeedback)
-	if err != nil {
-		return fmt.Errorf("failed visual compression sequence: %w", err)
-	}
-
+func (ai *AgentIntern) processTypeScriptFeatureDevelopment(req Requirement, pastFeedback string, branchName string) error {
+	// 1. Keep text context compact for free tier limitations
 	liveExecutionTaskTextPrompt := fmt.Sprintf(
-		"Task Objective: %s\nMandatory Constraints Scope: %s\nVerify project level restrictions. Apply changes cleanly in: %s",
-		req.Description, strings.Join(req.Scope, ", "), ai.TargetDir,
+		"Task Objective: %s\nConstraints Scope: %s\nGuardrails:\n%s\nTarget Branch Context: %s.",
+		req.Description, strings.Join(req.Scope, ", "), pastFeedback, branchName,
 	)
 
-	log.Println("[Gemini Integration] 🧠 Dispatched multimodal prompt payload (Visual Matrix Configuration + Text Task Head)...")
+	log.Println("[Gemini Integration] 🧠 Requesting URL sanitization logic modifications...")
 
-	parts := []*genai.Part{
-		{InlineData: &genai.Blob{Data: compressedMemoryBytes, MIMEType: "image/png"}},
-		{Text: liveExecutionTaskTextPrompt},
-	}
+	parts := []*genai.Part{{Text: liveExecutionTaskTextPrompt}}
 
-	codeGenResponse, err := ai.GenerateContentSafe(ai.Ctx, "gemini-2.5-pro", &genai.Content{Parts: parts})
+	// Hit Gemini 2.5 Flash safely
+	codeGenResponse, err := ai.GenerateContentSafe(ai.Ctx, "gemini-2.5-flash", &genai.Content{Parts: parts})
 	if err != nil {
 		return fmt.Errorf("gemini code block generation fault: %w", err)
 	}
 
-	log.Printf("[Fulfillment Code Generated] Changes processed. Gemini Output Length: %d symbols.", len(codeGenResponse.Text()))
+	log.Printf("[Fulfillment] Code production pass complete. Output Length: %d symbols.", len(codeGenResponse.Text()))
 
+	// 🚨 ✨ THE FIX: Explicitly target a file inside flights-scanner and write the changes down!
+	targetFile := "src/utils/urlSanitizer.ts" // Adjust this relative path to match your target file setup
+
+	log.Printf("[File System] Writing generated code payload to target path point: %s", targetFile)
+
+	// Call your GenerateFeatureCode method from coder.go
+	// (Passing a blank base64 payload since we shifted completely to text for the free-tier)
+	_, err = ai.GenerateFeatureCode(ai.Ctx, req.Description, "", targetFile)
+	if err != nil {
+		return fmt.Errorf("failed to commit generated feature string code down to disk storage: %w", err)
+	}
+
+	// 2. Execute verification metrics test gate pass
 	log.Println("[QA Verification Gate] 🧪 Executing test matrices via terminal runtime (bun test)...")
 	testExecutionCmd := exec.Command("bun", "test")
 	testExecutionCmd.Dir = ai.TargetDir
@@ -297,7 +306,17 @@ func main() {
 	defaultTargetRepo := "/Users/macbookpro/Developer/flights-scanner"
 	internWorker := NewAgentIntern(defaultTargetRepo)
 
-	// Step 1: Read live mail logs from Titan Mail servers
+	// ✨ GRACEFUL SHUTDOWN LISTENER INTERCEPT ENGINE
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		log.Println("\n[Graceful Shutdown] 🛑 OS Intercept caught (Ctrl+C). Restoring repository main checkout points cleanly...")
+		_ = internWorker.runExternalGitCommand("checkout", "main")
+		log.Println("[Graceful Shutdown] ✅ Sandbox metrics secured. Systems safe. Offline.")
+		os.Exit(0)
+	}()
+
 	sender, body, err := internWorker.FetchLatestClientEmail()
 	if err != nil {
 		log.Printf("[Email Sync Warning] Falling back to manual parameters: %v", err)
@@ -305,6 +324,5 @@ func main() {
 		body = "Please clean the string encoding parameters on our dynamic flight checkout URLs."
 	}
 
-	// Step 2: Kick off execution lifecycle sequence
 	internWorker.ExecuteLifecyclePass(sender, body)
 }
