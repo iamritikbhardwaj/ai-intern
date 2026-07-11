@@ -86,18 +86,36 @@ func (ai *AgentIntern) GenerateContentSafe(ctx context.Context, model string, co
 		return nil, fmt.Errorf("gemini api invocation blocked: engine suspended")
 	}
 
-	resp, err := ai.Client.Models.GenerateContent(ctx, model, contents, nil)
-	if err != nil {
+	maxRetries := 3
+	backoffDuration := 12 * time.Second
+
+	for i := 0; i < maxRetries; i++ {
+		resp, err := ai.Client.Models.GenerateContent(ctx, model, contents, nil)
+		if err == nil {
+			return resp, nil // Success! Exit cleanly.
+		}
+
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "429") || strings.Contains(errStr, "exhausted") || strings.Contains(errStr, "quota") {
-			log.Println("[Quota Guard] 🚨 429 Rate Limit Exhausted! Engaging 1-hour defensive safety lock.")
-			ai.SuspendEngine(1 * time.Hour)
-			os.Exit(0)
+			log.Printf("[Quota Guard] ⚠️ Hit a 429 rate limit window. Retry %d/%d - Backing off for %v...", i+1, maxRetries, backoffDuration)
+
+			// Pause the thread to let Google's rolling token bucket drain
+			time.Sleep(backoffDuration)
+
+			// Double the wait time for the next loop pass if this one fails
+			backoffDuration *= 2
+			continue
 		}
+
+		// If it's a different error (like a syntax error), return immediately instead of retrying
 		return nil, err
 	}
 
-	return resp, nil
+	// If all retries fail, engage the standard safety lock file
+	log.Println("[Quota Guard] 🚨 Rate limit retries exhausted. Engaging 1-hour defensive safety lock.")
+	ai.SuspendEngine(1 * time.Hour)
+	os.Exit(0)
+	return nil, fmt.Errorf("gemini api invocation blocked: rate limit exhausted")
 }
 
 func (ai *AgentIntern) readMemoryAndFeedback() string {
@@ -163,36 +181,33 @@ func (ai *AgentIntern) SyncTargetBranch(featureTitle string) (string, bool, erro
 }
 
 func (ai *AgentIntern) FetchLatestClientEmail() (string, string, error) {
-	log.Println("[Titan Mail] Connecting to imap.titan.email:993...")
-	c, err := client.DialTLS("imap.titan.email:993", nil)
+	// ✨ Target Google's secure IMAP cluster on port 993
+	log.Println("[Gmail Link] Connecting to imap.gmail.com:993...")
+	c, err := client.DialTLS("imap.gmail.com:993", nil)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to reach Titan IMAP node: %w", err)
+		return "", "", fmt.Errorf("failed to reach Gmail IMAP node: %w", err)
 	}
 	defer c.Logout()
 
-	userEmail := "ritik@codecraftedlabs.co.in"
+	// Use your target Gmail address and the 16-character App Password token
+	userEmail := "ritiklrt20@gmail.com"
 	password := os.Getenv("EMAIL_APP_PASSWORD")
 
 	if err := c.Login(userEmail, password); err != nil {
-		return "", "", fmt.Errorf("titan authorization rejected: %w", err)
+		return "", "", fmt.Errorf("gmail authorization rejected: %w", err)
 	}
 
+	log.Println("[Gmail Link] 🎉 Successfully authenticated! Selecting INBOX...")
+
+	// Open the Inbox in read-only mode to check for incoming client messages
+	_, err = c.Select("INBOX", true)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to select inbox directory: %w", err)
+	}
+
+	// Fallback to manual parameters for local processing flow simulation
 	mockSender := "gurmeet.singh@codecraftedlabs.co.in"
-	mockBody := `Dear Intern,
-
-This is an administrative alignment pass. Your core task for this execution cycle is to run an exhaustive technical audit across the current target repository workspace. 
-
-### Mandatory Audit Execution Steps:
-1. Initialize a full branch synchronization sweep ('git branch -a') to identify all active or dangling feature branches currently tracked within the repository.
-2. Review the structural layout of the codebase to evaluate code design consistency and identify simple, beginner-friendly utility opportunities (Level 1 vectors) like string sanitizers or boundary wrappers.
-3. Consolidate your architectural findings. Write a comprehensive summary directly into the 'PAST_FEEDBACK.md' file under a new section titled '## 📊 Global Workspace Alignment Log'.
-4. In this new log entry, explicitly document:
-   * A clean list of all discovered branch name tracking matrices.
-   * Your current Level 1 skill progression milestones.
-   * Core architectural safety constraints you must follow for your priority client, Gurmeet Singh.
-
-Do not write or modify any application features during this pass—focus entirely on reading the workspace variables, syncing your tracking branch knowledge base, and writing down your retrospective baseline in the markdown file.`
-
+	mockBody := "Please clean the string encoding parameters on our dynamic flight checkout URLs."
 	return mockSender, mockBody, nil
 }
 
@@ -213,7 +228,7 @@ func (ai *AgentIntern) ExecuteLifecyclePass(senderEmail string, rawIncomingEmail
 	analysisPrompt := fmt.Sprintf(`Analyze this client request. Extract it into a clean JSON layout matching struct {title, description, scope: string[]}. Do not return markdown wraps. Email: %s`, rawIncomingEmail)
 
 	// ⏳ Pacing Buffer: Prevent hitting the endpoint too rapidly if looped
-	time.Sleep(2 * time.Second)
+	time.Sleep(8 * time.Second)
 
 	log.Println("[Gemini Integration] 🧠 Dispatched parsing analysis payload...")
 	resp, err := ai.GenerateContentSafe(ai.Ctx, "gemini-2.5-flash", &genai.Content{Parts: []*genai.Part{{Text: analysisPrompt}}})
@@ -259,6 +274,9 @@ func (ai *AgentIntern) ExecuteLifecyclePass(senderEmail string, rawIncomingEmail
 		return
 	}
 
+	log.Println("[Engine Pace] ⏳ User authorized. Pausing 6 seconds to reset free-tier concurrency limits...")
+	time.Sleep(6 * time.Second)
+
 	if err := ai.processTypeScriptFeatureDevelopment(req, pastFeedback, branchName); err != nil {
 		log.Printf("[Development Crash] Sequence broke: %v\n", err)
 	}
@@ -284,8 +302,8 @@ func (ai *AgentIntern) processTypeScriptFeatureDevelopment(req Requirement, past
 	log.Printf("[Fulfillment] Code production pass complete. Output Length: %d symbols.", len(codeGenResponse.Text()))
 
 	// ⏳ ✨ THE FIX: Inject a pacing buffer to let the free-tier token buckets refresh
-	log.Println("[Engine Pace] ⏳ Standing by for 5 seconds to clear free-tier API concurrency thresholds...")
-	time.Sleep(5 * time.Second)
+	log.Println("[Engine Pace] ⏳ Standing by for 6 seconds to clear free-tier API concurrency thresholds...")
+	time.Sleep(6 * time.Second)
 
 	targetFile := "src/utils/urlSanitizer.ts"
 	log.Printf("[File System] Writing generated code payload to target path point: %s", targetFile)
@@ -356,6 +374,9 @@ Core Directive: Run an exhaustive technical audit across the flights-scanner wor
 
 *Do not write code updates to urlSanitizer.ts yet. Focus exclusively on reading the codebase and appending the summary log to PAST_FEEDBACK.md.*`
 	}
+
+	log.Println("[Engine Startup] ⏳ Standing by for 8 seconds to ensure a clear API token window...")
+	time.Sleep(8 * time.Second)
 
 	internWorker.ExecuteLifecyclePass(sender, body)
 }
