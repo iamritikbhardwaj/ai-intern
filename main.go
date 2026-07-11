@@ -424,29 +424,45 @@ func (ai *AgentIntern) processTypeScriptFeatureDevelopment(req Requirement, past
 
 	log.Println("[Local LLM] 🧠 Formulating factual engineering verification log...")
 
-	runLogPrompt := fmt.Sprintf(`You are an automated software engineer loop tracking workspace progress.
+	// Clean, context-isolated prompting layer with industry-standard integration rules
+	runLogPrompt := fmt.Sprintf(`You are an automated software engineer loop executing a strict workspace alignment pass. 
 	
-	CRITICAL PROTOCOL:
-	1. Review the "Prior Feedback Context" section below carefully. Look for past mistakes, rules, or user constraints documented in previous runs.
-	2. Analyze the current environment state (Branches and Files).
-	3. Generate a new "## 📊 Global Workspace Alignment Log" section. Do NOT copy paste old logs. Write a fresh update documenting the factual state of this current run, ensuring you do not repeat errors noted in the history.
+	CRITICAL COMPLIANCE PROTOCOLS:
+	1. READ ALL WORKSPACE REFERENCED DOCUMENTS:
+	   - Carefully review the 'Prior Feedback Context' below to identify past fixes (such as PKFare double unwrapping and numeric float parsing constraints).
+	   - Cross-check your structural parameters with 'docs/new_api_specs.md' and the Excel mapping file 'docs/UAT.xlsx' (or UAT.xls) to evaluate active compliance rules.
+	   - Detect if another user or process has updated these files since the last run. Adjust your structural output text layout to blend smoothly with their changes instead of overwriting them.
 
-	--- ENVIRONMENT CONTEXT ---
-	Target Repository: %s
-	Current Branch Context: %s
+	2. ENFORCE INDUSTRY-STANDARD API INTEGRATION BEST PRACTICES:
+	   - **PKFare API Protocols**: You must handle massive payload streams defensively. All raw responses are compressed via GZIP and incoming payloads must be BASE64 encrypted. Ensure your internal Axios interceptor pipeline decompresses data fully before property unwrapping.
+	   - **Viator API Protocols**: Viator enforces strict global API versioning via headers ('Accept: application/json;version=2.0'). You are forbidden from passing mismatched version parameters across separate routes. Availability schedules follow an inverse model (ingesting unavailable dates); ensure caching schedules reflect this logic.
+
+	3. DOCUMENT ACTIVE WORKSPACE STATE HONESTLY (ZERO HALLUCINATION):
+	   - Look ONLY at the current environment metrics block for this specific execution run.
+	   - Output your update strictly under the header "## 📊 Global Workspace Alignment Log".
+	   - Identify the REAL active branch name for this pass. Do NOT copy-paste historical logs or old branch strings from the history sections.
+	   - Explicitly state the truth: "🛑 The integration logic is currently in the INGESTION and SPECIFICATION phase. No functional TypeScript changes have been committed to the codebase files yet."
+
+	===========================================================================
+	--- PRIOR FEEDBACK CONTEXT (HISTORICAL MEMORY) ---
+	===========================================================================
+	%s
+
+	===========================================================================
+	--- ACTIVE CURRENT EXECUTION RUN (FACTUAL INPUTS) ---
+	===========================================================================
+	Active Target Repository Path: %s
+	Real Active Branch for This Run: %s
 	
-	Discovered System Branch List:
+	Actual Shell Branch List (git branch -a):
 	%s
 
-	Discovered Workspace Files (Top 15):
+	Actual Workspace Source Files (git ls-files):
 	%s
 
-	External API Documentation Specification (If Applicable):
+	Newly Injected Task Documentation Specs (docs/new_api_specs.md):
 	%s
-
-	Prior Feedback Context (Your Historical Memory):
-	%s
-	`, ai.TargetDir, branchName, realBranches, realFiles, docPayload, pastFeedback)
+	`, pastFeedback, ai.TargetDir, branchName, realBranches, realFiles, docPayload)
 
 	var logUpdates string
 	if useLocalLLM {
