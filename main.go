@@ -262,10 +262,71 @@ func (ai *AgentIntern) ExecuteLifecyclePass(senderEmail string, rawIncomingEmail
 	}
 }
 
-func (ai *AgentIntern) processTypeScriptFeatureDevelopment(req Requirement, pastFeedback string, branchName string) error {
-	log.Println("[Gemini Integration] 🧠 Formulating engineering verification context updates...")
+// ReadExternalDocumentation scans local workspace directories for specific API references
+func (ai *AgentIntern) ReadExternalDocumentation(docFileName string) string {
+	docPath := filepath.Join(ai.TargetDir, "docs", docFileName)
 
-	runLogPrompt := fmt.Sprintf(`You are an automated software engineer loop acting as an intern. Review this task directive: %s. Update the 'PAST_FEEDBACK.md' log parameters under a new section titled '## 📊 Global Workspace Alignment Log'. Write down the historical branch contexts found, Level 1 competency profiles, and client safety rules for Gurmeet Singh. Historical context file data: %s`, req.Description, pastFeedback)
+	data, err := os.ReadFile(docPath)
+	if err != nil {
+		log.Printf("[Docs Info] No external documentation found at docs/%s. Proceeding with baseline training weights.", docFileName)
+		return ""
+	}
+
+	log.Printf("[Docs Link] 📖 Successfully ingested external reference layout: docs/%s (%d bytes)", docFileName, len(data))
+	return fmt.Sprintf("\n--- EXTERNAL API DOCUMENTATION CORE REFERENCE (%s) ---\n%s\n", docFileName, string(data))
+}
+
+func (ai *AgentIntern) processTypeScriptFeatureDevelopment(req Requirement, pastFeedback string, branchName string) error {
+	log.Println("[Workspace Inspection] 📂 Querying active repository branch tree...")
+
+	// 1. Get the real local branch matrix from the target repo shell
+	var realBranches string
+	cmdBranches := exec.Command("git", "branch", "-a")
+	cmdBranches.Dir = ai.TargetDir
+	if out, err := cmdBranches.Output(); err == nil {
+		realBranches = string(out)
+	} else {
+		realBranches = "Could not track active branch configurations."
+	}
+
+	// 2. Discover active project files to give the model structural awareness
+	var realFiles string
+	cmdFiles := exec.Command("git", "ls-files")
+	cmdFiles.Dir = ai.TargetDir
+	if out, err := cmdFiles.Output(); err == nil {
+		lines := strings.Split(string(out), "\n")
+		if len(lines) > 15 {
+			realFiles = strings.Join(lines[:15], "\n") + "\n... (truncated)"
+		} else {
+			realFiles = string(out)
+		}
+	} else {
+		realFiles = "Could not map workspace files."
+	}
+
+	log.Println("[Local LLM] 🧠 Formulating factual engineering verification log...")
+
+	// 3. Force the model to use the collected system context parameters
+	runLogPrompt := fmt.Sprintf(`You are an automated software engineer loop tracking workspace progress.
+	
+	Strict Instructions:
+	1. You must ONLY document the actual branches and details provided in the environment context below.
+	2. Do not invent languages, frameworks, or metrics not explicitly visible in the context.
+	3. Format your output strictly under the header "## 📊 Global Workspace Alignment Log".
+
+	--- ENVIRONMENT CONTEXT ---
+	Target Repository: %s
+	Current Branch Context: %s
+	
+	Discovered System Branch List:
+	%s
+
+	Discovered Workspace Files (Top 15):
+	%s
+
+	Prior Feedback Context:
+	%s
+	`, ai.TargetDir, branchName, realBranches, realFiles, pastFeedback)
 
 	var logUpdates string
 	if useLocalLLM {
@@ -282,19 +343,19 @@ func (ai *AgentIntern) processTypeScriptFeatureDevelopment(req Requirement, past
 		logUpdates = resp.Text()
 	}
 
-	// Append findings safely to the workspace tracking memory matrix
+	// Append metrics safely into your target flights-scanner path
 	feedbackPath := filepath.Join(ai.TargetDir, "PAST_FEEDBACK.md")
 	f, err := os.OpenFile(feedbackPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to mount memory tracking file: %w", err)
+		return fmt.Errorf("failed to open feedback tracking file: %w", err)
 	}
 	defer f.Close()
 
 	if _, err := f.WriteString("\n" + logUpdates + "\n"); err != nil {
-		return fmt.Errorf("failed to commit structural stream changes: %w", err)
+		return fmt.Errorf("failed to commit structural logs: %w", err)
 	}
 
-	log.Println("[Fulfillment] ✅ Structural inspection update committed directly to PAST_FEEDBACK.md successfully.")
+	log.Println("[Fulfillment] ✅ Factual audit log committed to PAST_FEEDBACK.md.")
 	return nil
 }
 
