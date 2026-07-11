@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/emersion/go-imap/client"
+	"github.com/joho/godotenv"
 	"google.golang.org/genai"
 )
 
@@ -349,7 +350,29 @@ func (ai *AgentIntern) SuspendEngine(d time.Duration) {
 // 🏃‍♂️ AGENT INVOCATION ENGINE
 // ============================================================================
 
+func validateEnvironment() {
+	_ = godotenv.Load() // Load .env file if it exists, otherwise rely on system env
+
+	requiredVars := []string{
+		"GEMINI_API_KEY",
+		"EMAIL_APP_PASSWORD",
+	}
+
+	var missingVars []string
+	for _, reqVar := range requiredVars {
+		if os.Getenv(reqVar) == "" {
+			missingVars = append(missingVars, reqVar)
+		}
+	}
+
+	if len(missingVars) > 0 {
+		log.Fatalf("🚨 Environment Validation Failed: Missing required configuration keys: [%s]", strings.Join(missingVars, ", "))
+	}
+}
+
 func main() {
+	validateEnvironment()
+
 	defaultTargetRepo := "/Users/macbookpro/Developer/flights-scanner"
 	internWorker := NewAgentIntern(defaultTargetRepo)
 
